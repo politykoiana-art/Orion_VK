@@ -5,8 +5,8 @@ import sqlite3
 import time
 import os
 import sys
-from vkbottle import Bot, Message
-from vkbottle.bot import Blueprint
+from vkbottle import Bot
+from vkbottle.bot import Message, Blueprint
 from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
