@@ -6,14 +6,12 @@ import time
 import os
 import sys
 from vkbottle import Bot
-from vkbottle.bot import Message, Blueprint
 from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TOKEN = os.environ["VK_TOKEN"]
 bot = Bot(token=TOKEN)
-bp = Blueprint(name='activity_bot')
 
 conn = sqlite3.connect("db.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -54,9 +52,7 @@ with db_lock:
     """)
     conn.commit()
 
-# Регулярное выражение для ссылок ВКонтакте
 link_pattern = r"(?:https?://)?(?:www\.)?(?:vk\.com|vkontakte\.ru)/(?:[^\s]+)"
-
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
 def msk_now():
@@ -85,14 +81,8 @@ async def is_admin(chat_id, user_id):
     except Exception:
         return False
 
-def get_week_start():
-    now = msk_now()
-    start_of_week = now - datetime.timedelta(days=now.weekday())
-    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int(start_of_week.timestamp())
-
-@bp.on.message()
-async def handle_message(message: Message):
+@bot.on.message()
+async def handle_message(message):
     if not message.text:
         return
 
@@ -113,7 +103,7 @@ async def handle_message(message: Message):
                 print(f"  → Ошибка удаления: {e}")
         return
 
-    # Поиск ссылок ВК
+    # Поиск ссылки ВК
     matches = re.findall(link_pattern, message.text)
     if not matches:
         print("  → Ссылка ВК не найдена, удаляю сообщение.")
@@ -130,7 +120,6 @@ async def handle_message(message: Message):
     activity = message.text.replace(link, "").strip() or "лайк"
     print(f"  → Найдена ссылка: {link}")
 
-    # Недельный лимит (4 поста)
     now_ts = int(time.time())
     with db_lock:
         cursor.execute(
@@ -141,7 +130,7 @@ async def handle_message(message: Message):
         current_posts = row[0] if row else 0
 
     if current_posts >= 4:
-        print(f"  → Лимит превышен ({current_posts}/4). Отправляю предупреждение и удаляю сообщение.")
+        print(f"  → Лимит превышен ({current_posts}/4).")
         await message.answer(
             f"❗ {username}, лимит 4 задания в рабочую неделю исчерпан. Задание не создано."
         )
@@ -171,7 +160,6 @@ async def handle_message(message: Message):
         )
         conn.commit()
 
-    # Отправляем сообщение с кнопкой
     keyboard = Keyboard(inline=True)
     keyboard.add_callback_button(
         label="✅ Актив выполнен",
@@ -186,7 +174,6 @@ async def handle_message(message: Message):
         cursor.execute("UPDATE tasks SET message_id=? WHERE id=?", (sent.conversation_message_id, task_id))
         conn.commit()
 
-    # Удаляем исходное сообщение
     if not is_user_admin:
         try:
             await message.api.messages.delete(peer_id=chat_id, cmids=[message.conversation_message_id], delete_for_all=True)
@@ -194,35 +181,35 @@ async def handle_message(message: Message):
         except Exception as e:
             print(f"  → Ошибка удаления исходного сообщения: {e}")
 
-@bp.on.raw_event("message_event", dataclass=Callback)
-async def handle_callback(callback: Callback):
-    payload = callback.object.payload
+@bot.on.raw_event("message_event")
+async def handle_callback(event):
+    payload = event.object.payload
     if payload.get("cmd") != "done":
         return
     task_id = payload.get("task_id")
-    user_id = callback.object.user_id
+    user_id = event.object.user_id
     now_ts = int(time.time())
 
     with db_lock:
         cursor.execute("SELECT created, chat_id, author, message_id FROM tasks WHERE id=?", (task_id,))
         task = cursor.fetchone()
         if not task:
-            await callback.answer("Задание не найдено")
+            await event.answer("Задание не найдено")
             return
         created, chat_id, author_id, msg_id = task
 
         if user_id == author_id:
-            await callback.answer("Нельзя выполнить своё задание")
+            await event.answer("Нельзя выполнить своё задание")
             return
         if now_ts - created < 10:
-            await callback.answer("Подождите 10 секунд")
+            await event.answer("Подождите 10 секунд")
             return
         cursor.execute(
             "SELECT * FROM completions WHERE task_id=? AND user_id=? AND chat_id=?",
             (task_id, user_id, chat_id)
         )
         if cursor.fetchone():
-            await callback.answer("Уже отмечено")
+            await event.answer("Уже отмечено")
             return
 
         cursor.execute(
@@ -237,7 +224,6 @@ async def handle_callback(callback: Callback):
         )
         conn.commit()
 
-    # Меняем кнопку на неактивную
     new_keyboard = Keyboard(inline=True)
     new_keyboard.add_callback_button(
         label="✅ Выполнено",
@@ -254,7 +240,7 @@ async def handle_callback(callback: Callback):
     except Exception as e:
         print(f"Ошибка при смене кнопки: {e}")
 
-    await callback.answer("Засчитано ✅")
+    await event.answer("Засчитано ✅")
 
 # ---------- Планировщик ----------
 def scheduler():
@@ -270,7 +256,6 @@ def scheduler():
         hour = now_dt.hour
         week_num = now_dt.isocalendar()[1]
 
-        # Сброс weekly_posts в понедельник 00:00
         if day == 0 and hour == 0 and now_ts - last_week_reset > 3600:
             with db_lock:
                 cursor.execute("UPDATE users SET weekly_posts = 0")
@@ -285,7 +270,6 @@ def scheduler():
             chats |= {r[0] for r in cursor.fetchall()}
 
         for chat_id in chats:
-            # Пятница 23:00
             if day == 4 and hour == 23 and (chat_id, week_num) not in friday_notified:
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -294,9 +278,8 @@ def scheduler():
                     )
                     friday_notified.add((chat_id, week_num))
                 except Exception as e:
-                    print(f"Ошибка отправки пятничного сообщения: {e}")
+                    print(f"Ошибка пятничного сообщения: {e}")
 
-            # Понедельник 7:00
             if day == 0 and hour == 7 and (chat_id, week_num) not in monday_notified:
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -305,9 +288,8 @@ def scheduler():
                     )
                     monday_notified.add((chat_id, week_num))
                 except Exception as e:
-                    print(f"Ошибка отправки понедельничного сообщения: {e}")
+                    print(f"Ошибка понедельничного сообщения: {e}")
 
-            # Истекшие задания (24 часа)
             with db_lock:
                 cursor.execute(
                     "SELECT id, created, author, author_name, message_id, link FROM tasks WHERE chat_id=?",
@@ -336,14 +318,13 @@ def scheduler():
                             cursor.execute("SELECT id FROM users WHERE username=? AND chat_id=?", (u, chat_id))
                             row = cursor.fetchone()
                         if row:
-                            is_admin = asyncio.run_coroutine_threadsafe(
+                            is_adm = asyncio.run_coroutine_threadsafe(
                                 is_admin(chat_id, row[0]), bot.loop
                             ).result()
-                            if is_admin:
+                            if is_adm:
                                 admins.add(u)
 
                     not_done = (all_users - done_users) - {author_name} - admins
-                    text = ""
                     if not_done:
                         text = "❌ Не выполнили задание:\n\n" + "\n".join([f"{u}" for u in not_done if u])
                     else:
@@ -355,13 +336,12 @@ def scheduler():
                             bot.loop
                         )
                     except Exception as e:
-                        print(f"Ошибка отправки отчёта о невыполнивших: {e}")
+                        print(f"Ошибка отчёта: {e}")
 
                     with db_lock:
                         cursor.execute("DELETE FROM tasks WHERE id=?", (task_id,))
                         conn.commit()
 
-            # Недельный отчёт (воскресенье 12:00)
             if day == 6 and hour == 12 and (chat_id, week_num) not in weekly_reported:
                 week_ago = now_ts - 604800
                 with db_lock:
@@ -394,7 +374,7 @@ def scheduler():
                     )
                     weekly_reported.add((chat_id, week_num))
                 except Exception as e:
-                    print(f"Ошибка отправки недельного отчёта: {e}")
+                    print(f"Ошибка недельного отчёта: {e}")
 
         time.sleep(60)
 
