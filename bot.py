@@ -13,15 +13,20 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import os
 import sys
 
-print("Бот запускается...")
-print("Доступные переменные:", list(os.environ.keys()))
+print("=== БОТ ЗАПУСКАЕТСЯ ===")
+print("Все переменные окружения:")
+for key, value in os.environ.items():
+    if "TOKEN" in key:
+        print(f"{key}={value[:20]}...")  # показываем только начало токена
+    else:
+        print(f"{key}={value}")
+print("=== КОНЕЦ ПЕРЕМЕННЫХ ===")
 
-# Пытаемся получить токен из VK_TOKEN или TOKEN
+# Далее ваш код получения токена:
 token = os.environ.get("VK_TOKEN") or os.environ.get("TOKEN")
 if not token:
     print("❌ ОШИБКА: ни VK_TOKEN, ни TOKEN не найдены")
     sys.exit(1)
-
 print(f"✅ Токен получен, длина: {len(token)}")
 TOKEN = token
 bot = Bot(token=TOKEN)
