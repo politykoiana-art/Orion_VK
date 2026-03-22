@@ -10,6 +10,11 @@ from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+import os
+print("Бот запускается...")
+print("TOKEN найдена:", bool(os.environ.get("TOKEN")))
+print("Первые 10 символов TOKEN:", os.environ.get("TOKEN", "")[:10])
+
 TOKEN = os.environ["TOKEN"]   # используем переменную TOKEN
 bot = Bot(token=TOKEN)
 
