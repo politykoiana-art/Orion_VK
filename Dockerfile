@@ -1,2 +1,10 @@
 FROM python:3.11-slim
-CMD ["python", "-c", "import os; print('Hello'); print(dict(os.environ))"]
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "bot.py"]
