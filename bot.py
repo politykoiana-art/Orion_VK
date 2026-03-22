@@ -11,9 +11,20 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import os
+import sys
+
 print("Бот запускается...")
-print("TOKEN найдена:", bool(os.environ.get("TOKEN")))
-print("Первые 10 символов TOKEN:", os.environ.get("TOKEN", "")[:10])
+print("Доступные переменные:", list(os.environ.keys()))
+
+# Пытаемся получить токен из VK_TOKEN или TOKEN
+token = os.environ.get("VK_TOKEN") or os.environ.get("TOKEN")
+if not token:
+    print("❌ ОШИБКА: ни VK_TOKEN, ни TOKEN не найдены")
+    sys.exit(1)
+
+print(f"✅ Токен получен, длина: {len(token)}")
+TOKEN = token
+bot = Bot(token=TOKEN)
 
 TOKEN = os.environ["TOKEN"]   # используем переменную TOKEN
 bot = Bot(token=TOKEN)
