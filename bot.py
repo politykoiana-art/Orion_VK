@@ -10,7 +10,7 @@ from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-TOKEN = os.environ["VK_TOKEN"]
+TOKEN = os.environ["TOKEN"]
 bot = Bot(token=TOKEN)
 
 conn = sqlite3.connect("db.db", check_same_thread=False)
