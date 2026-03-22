@@ -1,45 +1,30 @@
-import sys
-print("1. Импортируем модули...")
 import asyncio
 import datetime
 import re
 import sqlite3
 import time
 import os
+import sys
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-print("2. Импортируем vkbottle...")
-try:
-    from vkbottle import Bot
-    from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
-    print("   ✅ vkbottle импортирован")
-except Exception as e:
-    print(f"   ❌ Ошибка импорта vkbottle: {e}")
+from vkbottle import Bot
+from vkbottle.bot import Message
+from vkbottle.tools import Keyboard, KeyboardButtonColor, Callback
+
+# ---- Конфигурация ----
+TOKEN = os.environ.get("VK_TOKEN") or os.environ.get("TOKEN")
+if not TOKEN:
+    print("❌ ОШИБКА: переменная VK_TOKEN или TOKEN не задана")
     sys.exit(1)
 
-print("3. Проверяем переменные окружения...")
-token = os.environ.get("VK_TOKEN") or os.environ.get("TOKEN")
-if not token:
-    print("   ❌ Токен не найден ни в VK_TOKEN, ни в TOKEN")
-    sys.exit(1)
-print(f"   ✅ Токен получен, длина: {len(token)}")
+bot = Bot(token=TOKEN)
 
-print("4. Создаём объект Bot...")
-try:
-    bot = Bot(token=token)
-    print("   ✅ Bot создан")
-except Exception as e:
-    print(f"   ❌ Ошибка при создании Bot: {e}")
-    sys.exit(1)
-
-print("5. Подключаемся к БД...")
+# ---- База данных ----
 conn = sqlite3.connect("db.db", check_same_thread=False)
 cursor = conn.cursor()
 db_lock = threading.Lock()
-print("   ✅ БД открыта")
 
-print("6. Создаём таблицы...")
 with db_lock:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -74,8 +59,8 @@ with db_lock:
         )
     """)
     conn.commit()
-print("   ✅ Таблицы созданы/проверены")
 
+# ---- Вспомогательные функции ----
 link_pattern = r"(?:https?://)?(?:www\.)?(?:vk\.com|vkontakte\.ru)/(?:[^\s]+)"
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
@@ -86,13 +71,13 @@ def is_work_time(timestamp):
     dt = datetime.datetime.fromtimestamp(timestamp, tz=MSK)
     weekday = dt.weekday()
     hour = dt.hour
-    if weekday == 0:
+    if weekday == 0:        # понедельник
         return hour >= 7
-    elif 1 <= weekday <= 3:
+    elif 1 <= weekday <= 3: # вторник–четверг
         return True
-    elif weekday == 4:
+    elif weekday == 4:      # пятница
         return hour < 23
-    else:
+    else:                   # суббота, воскресенье
         return False
 
 async def is_admin(chat_id, user_id):
@@ -105,8 +90,9 @@ async def is_admin(chat_id, user_id):
     except Exception:
         return False
 
+# ---- Обработчик сообщений ----
 @bot.on.message()
-async def handle_message(message):
+async def handle_message(message: Message):
     if not message.text:
         return
 
@@ -114,11 +100,9 @@ async def handle_message(message):
     user_id = message.from_id
     username = f"id{user_id}"
     is_user_admin = await is_admin(chat_id, user_id)
-
-    print(f"[{msk_now().strftime('%H:%M:%S')}] Обработка сообщения от {username}: {message.text[:100]}")
-
-    # Всегда обновляем запись пользователя (чтобы чат был в БД для отчётов)
     now_ts = int(time.time())
+
+    # ---- Всегда добавляем/обновляем пользователя в БД (для недельных отчётов) ----
     with db_lock:
         cursor.execute(
             "INSERT INTO users (id, chat_id, username, last_active) VALUES (?, ?, ?, ?) "
@@ -127,34 +111,31 @@ async def handle_message(message):
         )
         conn.commit()
 
-    # Выходные – удаляем сообщение не-админов
+    # ---- Удаление сообщений в нерабочее время (выходные) ----
     if not is_work_time(message.date):
-        print("  → Время нерабочее, удаляю сообщение.")
         if not is_user_admin:
             try:
                 await message.api.messages.delete(peer_id=chat_id, cmids=[message.conversation_message_id], delete_for_all=True)
             except Exception as e:
-                print(f"  → Ошибка удаления: {e}")
+                print(f"Ошибка удаления в выходной: {e}")
         return
 
-    # Поиск ссылки ВК
+    # ---- Поиск ссылки ВК ----
     matches = re.findall(link_pattern, message.text)
     if not matches:
-        print("  → Ссылка ВК не найдена, удаляю сообщение.")
         if not is_user_admin:
             try:
                 await message.api.messages.delete(peer_id=chat_id, cmids=[message.conversation_message_id], delete_for_all=True)
             except Exception as e:
-                print(f"  → Ошибка удаления: {e}")
+                print(f"Ошибка удаления сообщения без ссылки: {e}")
         return
 
     link = matches[0]
     if not link.startswith("http"):
         link = "https://" + link
     activity = message.text.replace(link, "").strip() or "лайк"
-    print(f"  → Найдена ссылка: {link}")
 
-    # Недельный лимит 4 поста
+    # ---- Недельный лимит (4 поста) ----
     with db_lock:
         cursor.execute(
             "SELECT weekly_posts FROM users WHERE id=? AND chat_id=?",
@@ -164,7 +145,6 @@ async def handle_message(message):
         current_posts = row[0] if row else 0
 
     if current_posts >= 4:
-        print(f"  → Лимит превышен ({current_posts}/4).")
         await message.answer(
             f"❗ {username}, лимит 4 задания в рабочую неделю исчерпан. Задание не создано."
         )
@@ -172,10 +152,10 @@ async def handle_message(message):
             try:
                 await message.api.messages.delete(peer_id=chat_id, cmids=[message.conversation_message_id], delete_for_all=True)
             except Exception as e:
-                print(f"  → Ошибка удаления: {e}")
+                print(f"Ошибка удаления при превышении лимита: {e}")
         return
 
-    # Создаём задание
+    # ---- Создаём задание ----
     with db_lock:
         cursor.execute(
             "INSERT INTO tasks (chat_id, author, author_name, link, activity, created) "
@@ -194,6 +174,7 @@ async def handle_message(message):
         )
         conn.commit()
 
+    # ---- Отправляем сообщение с кнопкой ----
     keyboard = Keyboard(inline=True)
     keyboard.add_callback_button(
         label="✅ Актив выполнен",
@@ -208,16 +189,16 @@ async def handle_message(message):
         cursor.execute("UPDATE tasks SET message_id=? WHERE id=?", (sent.conversation_message_id, task_id))
         conn.commit()
 
-    # Удаляем исходное сообщение
+    # ---- Удаляем исходное сообщение ----
     if not is_user_admin:
         try:
             await message.api.messages.delete(peer_id=chat_id, cmids=[message.conversation_message_id], delete_for_all=True)
-            print("  → Исходное сообщение удалено.")
         except Exception as e:
-            print(f"  → Ошибка удаления исходного сообщения: {e}")
+            print(f"Ошибка удаления исходного сообщения: {e}")
 
+# ---- Обработчик нажатия кнопки ----
 @bot.on.raw_event("message_event")
-async def handle_callback(event):
+async def handle_callback(event: Callback):
     payload = event.object.payload
     if payload.get("cmd") != "done":
         return
@@ -259,6 +240,7 @@ async def handle_callback(event):
         )
         conn.commit()
 
+    # Меняем кнопку на неактивную
     new_keyboard = Keyboard(inline=True)
     new_keyboard.add_callback_button(
         label="✅ Выполнено",
@@ -277,7 +259,7 @@ async def handle_callback(event):
 
     await event.answer("Засчитано ✅")
 
-# ---------- Планировщик ----------
+# ---------- Планировщик (сброс счётчиков, отчёты) ----------
 def scheduler():
     weekly_reported = set()
     friday_notified = set()
@@ -291,7 +273,7 @@ def scheduler():
         hour = now_dt.hour
         week_num = now_dt.isocalendar()[1]
 
-        # Сброс счётчика weekly_posts в понедельник 00:00
+        # Сброс weekly_posts в понедельник 00:00 МСК
         if day == 0 and hour == 0 and now_ts - last_week_reset > 3600:
             with db_lock:
                 cursor.execute("UPDATE users SET weekly_posts = 0")
@@ -306,7 +288,7 @@ def scheduler():
             chats |= {r[0] for r in cursor.fetchall()}
 
         for chat_id in chats:
-            # Уведомления о начале/конце недели
+            # Пятница 23:00 – уходим на выходные
             if day == 4 and hour == 23 and (chat_id, week_num) not in friday_notified:
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -317,6 +299,7 @@ def scheduler():
                 except Exception as e:
                     print(f"Ошибка пятничного сообщения: {e}")
 
+            # Понедельник 7:00 – начало недели
             if day == 0 and hour == 7 and (chat_id, week_num) not in monday_notified:
                 try:
                     asyncio.run_coroutine_threadsafe(
@@ -350,6 +333,7 @@ def scheduler():
                         )
                         all_users = {x[0] for x in cursor.fetchall()}
 
+                    # Исключаем автора и админов
                     admins = set()
                     for u in all_users:
                         with db_lock:
@@ -363,6 +347,7 @@ def scheduler():
                                 admins.add(u)
 
                     not_done = (all_users - done_users) - {author_name} - admins
+                    text = ""
                     if not_done:
                         text = "❌ Не выполнили задание:\n\n" + "\n".join([f"{u}" for u in not_done if u])
                     else:
@@ -374,7 +359,7 @@ def scheduler():
                             bot.loop
                         )
                     except Exception as e:
-                        print(f"Ошибка отчёта о невыполнивших: {e}")
+                        print(f"Ошибка отправки отчёта о невыполнивших: {e}")
 
                     with db_lock:
                         cursor.execute("DELETE FROM tasks WHERE id=?", (task_id,))
@@ -417,7 +402,7 @@ def scheduler():
 
         time.sleep(60)
 
-# ---------- Health-сервер ----------
+# ---------- Health-сервер для Railway/Bothost ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -434,5 +419,5 @@ def run_health_server():
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
-    print("Бот запущен и готов к работе!")
+    print("Бот VK запущен...")
     bot.run_forever()
