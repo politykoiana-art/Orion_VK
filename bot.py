@@ -291,10 +291,11 @@ def scheduler():
             # Пятница 23:00 – уходим на выходные
             if day == 4 and hour == 23 and (chat_id, week_num) not in friday_notified:
                 try:
-                    asyncio.run_coroutine_threadsafe(
+                    future = asyncio.run_coroutine_threadsafe(
                         bot.api.messages.send(peer_id=chat_id, message="🌙 Пост-чат ушел на выходные! Актив по желанию", random_id=0),
                         bot.loop
                     )
+                    future.result(timeout=10)
                     friday_notified.add((chat_id, week_num))
                 except Exception as e:
                     print(f"Ошибка пятничного сообщения: {e}")
@@ -302,10 +303,11 @@ def scheduler():
             # Понедельник 7:00 – начало недели
             if day == 0 and hour == 7 and (chat_id, week_num) not in monday_notified:
                 try:
-                    asyncio.run_coroutine_threadsafe(
+                    future = asyncio.run_coroutine_threadsafe(
                         bot.api.messages.send(peer_id=chat_id, message="☀️ Доброе утро, пост-чат работает в нормальном режиме", random_id=0),
                         bot.loop
                     )
+                    future.result(timeout=10)
                     monday_notified.add((chat_id, week_num))
                 except Exception as e:
                     print(f"Ошибка понедельничного сообщения: {e}")
@@ -347,17 +349,17 @@ def scheduler():
                                 admins.add(u)
 
                     not_done = (all_users - done_users) - {author_name} - admins
-                    text = ""
                     if not_done:
                         text = "❌ Не выполнили задание:\n\n" + "\n".join([f"{u}" for u in not_done if u])
                     else:
                         text = "✅ Все выполнили задание"
 
                     try:
-                        asyncio.run_coroutine_threadsafe(
+                        future = asyncio.run_coroutine_threadsafe(
                             bot.api.messages.send(peer_id=chat_id, message=text, random_id=0),
                             bot.loop
                         )
+                        future.result(timeout=10)
                     except Exception as e:
                         print(f"Ошибка отправки отчёта о невыполнивших: {e}")
 
@@ -392,17 +394,18 @@ def scheduler():
                         text += f"{t[0]} — {t[1]}\n"
 
                 try:
-                    asyncio.run_coroutine_threadsafe(
+                    future = asyncio.run_coroutine_threadsafe(
                         bot.api.messages.send(peer_id=chat_id, message=text, random_id=0),
                         bot.loop
                     )
+                    future.result(timeout=10)
                     weekly_reported.add((chat_id, week_num))
                 except Exception as e:
                     print(f"Ошибка недельного отчёта: {e}")
 
         time.sleep(60)
 
-# ---------- Health-сервер для Railway/Bothost ----------
+# ---------- Health-сервер для Bothost ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
